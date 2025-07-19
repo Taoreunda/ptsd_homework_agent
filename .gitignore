@@ -1,0 +1,84 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+venv/
+ENV/
+env/
+
+# 환경변수 및 비밀 키
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Firebase 인증 정보
+firebase-adminsdk-*.json
+serviceAccountKey.json
+firebase-service-account.json
+credentials/
+
+# UV 패키지 매니저
+.uv/
+
+# IDE 설정
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 로그 파일
+*.log
+logs/
+
+# 테스트 관련
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+
+# Chainlit 설정
+.chainlit/
+chainlit.md
+
+# 임시 파일
+*.tmp
+*.temp
+.cache/
+
+# 데이터 파일
+uploads/
+user_data/
+
+# 개발 전용 파일들 (배포 제외)
+dashboard.py
+run_dashboard.py
+reference/
+
+# 실제 데이터베이스 파일 (민감 정보)
+data/conversations.db
+
+# 실제 로그 파일들
+logs/*.log
+
+# 맥 시스템 파일
+**/.DS_Store
+
+# 백업 파일들
+*.bak
+*.backup
+
+# 개발 문서 및 설정 (내부용)
+CLAUDE.md
+.claude/

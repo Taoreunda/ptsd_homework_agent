@@ -1,0 +1,12 @@
+[theme]
+base = "light"
+primaryColor = "steelBlue"
+backgroundColor = "white"
+secondaryBackgroundColor = "aliceBlue"
+codeBackgroundColor="powderBlue"
+textColor = "darkSlateGray"
+linkColor = "darkBlue"
+font = "sans-serif"
+
+[server]
+enableStaticServing = false
