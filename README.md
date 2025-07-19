@@ -86,11 +86,45 @@ ptsd_homework_agent/
 - UV 패키지 매니저
 - OpenAI API 키
 
+## 🚀 Streamlit Community Cloud 배포
+
+### 1. 배포 준비
+```bash
+# 의존성 확인
+cat requirements.txt
+
+# 환경변수 템플릿 확인  
+cat .streamlit/secrets.toml
+```
+
+### 2. Streamlit Cloud에서 앱 생성
+1. [Streamlit Community Cloud](https://share.streamlit.io)에 로그인
+2. "New app" 클릭
+3. GitHub 저장소 연결: `https://github.com/Taoreunda/ptsd_homework_agent`
+4. Main file path: `streamlit_app.py`
+5. Advanced settings > Python version: 3.11
+
+### 3. 환경변수 설정
+**App Settings > Secrets**에서 다음 설정:
+```toml
+OPENAI_API_KEY = "sk-your_actual_api_key_here"
+OPENAI_MODEL_NAME = "gpt-4o-mini"
+THERAPY_SYSTEM_PROMPT_PATH = "prompts/therapy_system_prompt.md"
+PARTICIPANTS_JSON_PATH = "data/participants.json"
+LOG_LEVEL = "INFO"
+```
+
+### 4. 배포 완료
+- Deploy 버튼 클릭
+- 빌드 로그 확인
+- 앱 URL 확인 (예: `https://your-app-name.streamlit.app`)
+
 ## ⚠️ 주의사항
 
 - **연구 목적**: 실제 치료를 대체하지 않습니다
 - **데이터 보안**: 참가자 정보 보호 필수
 - **윤리 준수**: 연구 윤리 위원회 승인 필요
+- **API 비용**: OpenAI API 사용량 모니터링 필요
 
 ## 🔧 개발
 
@@ -103,3 +137,4 @@ tail -f logs/*.log
 - 테마: `.streamlit/config.toml`
 - 프롬프트: `prompts/therapy_system_prompt.md`
 - 참가자: `data/participants.json`
+- 배포 환경변수: `.streamlit/secrets.toml` (템플릿)
