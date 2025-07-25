@@ -58,6 +58,30 @@ def apply_admin_page_styles():
     """관리자 페이지용 추가 스타일을 적용합니다."""
     admin_css = """
     <style>
+        /* 관리자 버튼 너비 통일 */
+        .stButton > button {
+            width: 100% !important;
+            min-width: 150px !important;
+            padding: 0.5rem 1rem !important;
+            font-size: 14px !important;
+            border-radius: 8px !important;
+            font-weight: 500 !important;
+        }
+        
+        /* 사이드바 관리자 메뉴 버튼 */
+        .css-1d391kg .stButton > button {
+            width: 100% !important;
+            margin-bottom: 0.5rem !important;
+            background-color: #f8f9fa !important;
+            border: 1px solid #dee2e6 !important;
+            color: #495057 !important;
+        }
+        
+        .css-1d391kg .stButton > button:hover {
+            background-color: #e9ecef !important;
+            border-color: #adb5bd !important;
+        }
+        
         /* 관리자 테이블 반응형 디자인 */
         @media (max-width: 768px) {
             .stDataFrame {
@@ -67,6 +91,12 @@ def apply_admin_page_styles():
             /* 관리자 통계 카드 모바일 최적화 */
             .metric-container {
                 margin-bottom: 1rem;
+            }
+            
+            /* 모바일에서 버튼 크기 조정 */
+            .stButton > button {
+                min-width: 120px !important;
+                font-size: 13px !important;
             }
         }
         
@@ -78,13 +108,48 @@ def apply_admin_page_styles():
             margin-bottom: 1rem;
         }
         
+        /* 폼 내부 버튼 스타일 */
+        .stForm .stButton > button {
+            background-color: #007bff !important;
+            color: white !important;
+            border: none !important;
+        }
+        
+        .stForm .stButton > button:hover {
+            background-color: #0056b3 !important;
+        }
+        
+        /* 상태 변경 섹션 버튼 */
+        div[data-testid="column"] .stButton > button {
+            background-color: #28a745 !important;
+            color: white !important;
+            border: none !important;
+        }
+        
+        div[data-testid="column"] .stButton > button:hover {
+            background-color: #1e7e34 !important;
+        }
+        
         /* 성공/에러 메시지 스타일링 */
         .stSuccess {
             border-radius: 6px;
+            font-size: 14px !important;
         }
         
         .stError {
             border-radius: 6px;
+            font-size: 14px !important;
+        }
+        
+        /* 관리자 통계 메트릭 스타일 개선 */
+        .metric-container .metric-value {
+            font-size: 1.5rem !important;
+            font-weight: 600 !important;
+        }
+        
+        .metric-container .metric-label {
+            font-size: 0.9rem !important;
+            color: #666 !important;
         }
     </style>
     """
@@ -96,9 +161,14 @@ def apply_chat_interface_styles():
     """채팅 인터페이스용 스타일을 적용합니다."""
     chat_css = """
     <style>
-        /* 채팅 메시지 스타일링 */
+        /* 채팅 메시지 스타일링 - 폰트 크기 14px로 증가 */
         .stChatMessage {
             margin-bottom: 1rem;
+        }
+        
+        .stChatMessage .stMarkdown {
+            font-size: 14px !important;
+            line-height: 1.5 !important;
         }
         
         /* 사용자 메시지 스타일 */
@@ -107,21 +177,37 @@ def apply_chat_interface_styles():
             border-radius: 12px;
         }
         
+        .stChatMessage[data-testid="user-message"] .stMarkdown {
+            font-size: 14px !important;
+            font-weight: 500;
+        }
+        
         /* AI 어시스턴트 메시지 스타일 */
         .stChatMessage[data-testid="assistant-message"] {
             background-color: rgba(248, 249, 250, 1);
             border-radius: 12px;
         }
         
+        .stChatMessage[data-testid="assistant-message"] .stMarkdown {
+            font-size: 14px !important;
+            color: #333;
+        }
+        
         /* 채팅 입력창 스타일링 */
         .stChatInput {
             border-radius: 25px;
             border: 2px solid #e0e0e0;
+            font-size: 14px !important;
         }
         
         .stChatInput:focus {
             border-color: #007bff;
             box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
+        }
+        
+        /* 채팅 입력창 텍스트 크기 */
+        .stChatInput textarea {
+            font-size: 14px !important;
         }
     </style>
     """

@@ -60,6 +60,22 @@ def render_participant_registration():
         
         if submitted:
             if new_user_id and new_password and new_name and new_group:
+                # 입력값 검증
+                if len(new_user_id) < 3:
+                    st.error("❌ 참가자 ID는 최소 3자 이상이어야 합니다.")
+                    return
+                
+                if len(new_password) < 4:
+                    st.error("❌ 비밀번호는 최소 4자 이상이어야 합니다.")
+                    return
+                
+                # 기존 참가자 확인
+                existing_participant = st.session_state.participant_manager.get_participant_info(new_user_id)
+                if existing_participant:
+                    st.error(f"❌ 참가자 ID '{new_user_id}'는 이미 사용 중입니다. 다른 ID를 사용해주세요.")
+                    st.warning(f"💡 기존 참가자: {existing_participant.get('name')} ({existing_participant.get('group_type')} 그룹)")
+                    return
+                
                 try:
                     success = st.session_state.participant_manager.add_participant(
                         new_user_id, 
@@ -73,14 +89,30 @@ def render_participant_registration():
                     
                     if success:
                         st.success(f"✅ 참가자 '{new_name}' ({new_user_id}) 등록 완료!")
+                        st.info(f"📋 그룹: {new_group} | 전화번호: {new_phone or '미입력'} | 성별: {new_gender or '미입력'} | 나이: {new_age or '미입력'}")
                         logger.info(f"관리자가 참가자 등록: {new_user_id}")
+                        
+                        # 성공 후 폼 초기화를 위한 rerun
+                        st.rerun()
                     else:
-                        st.error("❌ 참가자 등록 실패. 중복된 ID이거나 입력값을 확인해주세요.")
+                        st.error("❌ 데이터베이스 제약 조건 위반. 입력값을 확인해주세요.")
+                        st.warning("💡 가능한 원인:")
+                        st.warning("- 나이는 18-100세 사이여야 합니다")
+                        st.warning("- 그룹은 'treatment' 또는 'control'이어야 합니다")
+                        
                 except Exception as e:
                     st.error(f"❌ 등록 중 오류 발생: {e}")
                     logger.error(f"참가자 등록 오류: {e}")
+                    
+                    # 구체적인 오류 메시지 제공
+                    error_str = str(e).lower()
+                    if "duplicate" in error_str or "unique" in error_str:
+                        st.warning(f"💡 '{new_user_id}' ID가 이미 존재합니다. 다른 ID를 사용해주세요.")
+                    elif "check" in error_str:
+                        st.warning("💡 입력값이 유효하지 않습니다. 나이, 성별, 그룹 정보를 확인해주세요.")
             else:
-                st.error("필수 항목을 모두 입력해주세요. (ID, 비밀번호, 이름, 그룹)")
+                st.error("❌ 필수 항목을 모두 입력해주세요.")
+                st.warning("💡 필수 항목: 참가자 ID, 비밀번호, 참가자명, 그룹")
 
 
 def render_participant_management():

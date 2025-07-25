@@ -9,6 +9,7 @@ import os
 from utils.logging_config import get_logger
 from dotenv import load_dotenv
 from src.database import DatabaseManager, ResponseTimeTracker, get_participant_manager
+from src.session_manager import get_session_manager
 from src.admin_pages import render_admin_sidebar, render_admin_page
 from src.ui_styles import (
     configure_page_settings, apply_mobile_optimized_css,
@@ -235,6 +236,10 @@ if "memory" not in st.session_state:
     st.session_state.memory = None
 if "session_id" not in st.session_state:
     st.session_state.session_id = None
+if "session_token" not in st.session_state:
+    st.session_state.session_token = None
+if "thread_id" not in st.session_state:
+    st.session_state.thread_id = None
 if "runnable" not in st.session_state:
     st.session_state.runnable = None
 if "db_manager" not in st.session_state:
@@ -243,6 +248,61 @@ if "response_tracker" not in st.session_state:
     st.session_state.response_tracker = ResponseTimeTracker()
 if "participant_manager" not in st.session_state:
     st.session_state.participant_manager = None
+if "session_manager" not in st.session_state:
+    st.session_state.session_manager = None
+
+# --- 자동 세션 복원 시도 ---
+if not st.session_state.authenticated:
+    # URL 파라미터에서 세션 토큰 확인
+    query_params = st.query_params
+    if "session_token" in query_params and not st.session_state.session_token:
+        session_token = query_params["session_token"]
+        
+        try:
+            session_manager = get_session_manager()
+            user_info = session_manager.authenticate_by_session(session_token)
+            
+            if user_info:
+                # 자동 로그인 성공
+                st.session_state.authenticated = True
+                st.session_state.user_info = user_info
+                st.session_state.session_token = session_token
+                st.session_state.session_manager = session_manager
+                
+                # 데이터베이스 초기화
+                st.session_state.db_manager = DatabaseManager()
+                st.session_state.participant_manager = get_participant_manager()
+                
+                # 기존 세션 ID (하위 호환성)
+                st.session_state.session_id = st.session_state.db_manager.create_session(
+                    user_info["user_id"]
+                )
+                
+                # 대화 메모리 복원
+                st.session_state.memory = session_manager.create_memory(
+                    user_info["user_id"],
+                    session_token,
+                    user_info["user_data"]["name"]
+                )
+                
+                # 모델 체인 설정
+                st.session_state.runnable = setup_model_and_chain(
+                    user_info["user_data"]["name"],
+                    st.session_state.memory
+                )
+                
+                # 응답 시간 추적 시작
+                st.session_state.response_tracker.start_timing()
+                
+                logger.info(f"자동 세션 복원 성공: {user_info['user_id']}")
+                st.rerun()
+            else:
+                logger.warning(f"세션 토큰 인증 실패: {session_token}")
+                # URL에서 잘못된 토큰 제거
+                st.query_params.clear()
+                
+        except Exception as e:
+            logger.error(f"자동 세션 복원 실패: {e}")
 
 # --- 인증 처리 ---
 if not st.session_state.authenticated:
@@ -264,28 +324,38 @@ if not st.session_state.authenticated:
                     st.session_state.authenticated = True
                     st.session_state.user_info = auth_result
                     
-                    # 데이터베이스 초기화
+                    # 세션 관리자 및 데이터베이스 초기화
                     try:
+                        st.session_state.session_manager = get_session_manager()
                         st.session_state.db_manager = DatabaseManager()
                         st.session_state.participant_manager = get_participant_manager()
                         
-                        # 세션 생성 및 DB 저장
+                        # 새 세션 토큰 생성
+                        st.session_state.session_token = st.session_state.session_manager.create_session(
+                            auth_result["user_id"]
+                        )
+                        
+                        # 기존 세션 ID (하위 호환성)
                         st.session_state.session_id = st.session_state.db_manager.create_session(
                             auth_result["user_id"]
                         )
                         
-                        logger.info(f"새 세션 생성: {st.session_state.session_id}")
+                        # 대화 메모리 생성 (PostgreSQL 백엔드)
+                        st.session_state.memory = st.session_state.session_manager.create_memory(
+                            auth_result["user_id"],
+                            st.session_state.session_token,
+                            auth_result["user_data"]["name"]
+                        )
+                        
+                        # URL에 세션 토큰 추가 (브라우저 새로고침 대응)
+                        st.query_params.update({"session_token": st.session_state.session_token})
+                        
+                        logger.info(f"새 세션 생성: {auth_result['user_id']} -> {st.session_state.session_token}")
                         
                     except Exception as e:
-                        logger.error(f"데이터베이스 초기화 실패: {e}")
-                        st.error("데이터베이스 연결에 실패했습니다. 관리자에게 문의하세요.")
-
-                    
-                    # 기본 메모리 초기화
-                    st.session_state.memory = ConversationBufferMemory(
-                        memory_key="history", 
-                        return_messages=True
-                    )
+                        logger.error(f"세션 초기화 실패: {e}")
+                        st.error("세션 생성에 실패했습니다. 관리자에게 문의하세요.")
+                        st.stop()
                     
                     # 모델 및 체인 설정
                     st.session_state.runnable = setup_model_and_chain(
@@ -325,9 +395,12 @@ else:
             if st.session_state.db_manager and st.session_state.session_id:
                 success = st.session_state.db_manager.end_session(st.session_state.session_id)
                 if success:
-                    logger.info(f"세션 종료: {st.session_state.session_id}")
+                    logger.info(f"기존 세션 종료: {st.session_state.session_id}")
                 else:
-                    logger.warning(f"세션 종료 실패: {st.session_state.session_id}")
+                    logger.warning(f"기존 세션 종료 실패: {st.session_state.session_id}")
+            
+            # URL에서 세션 토큰 제거
+            st.query_params.clear()
             
             # 세션 상태 초기화
             st.session_state.authenticated = False
@@ -336,10 +409,15 @@ else:
             st.session_state.memory = None
             st.session_state.runnable = None
             st.session_state.session_id = None
+            st.session_state.session_token = None
+            st.session_state.thread_id = None
             st.session_state.db_manager = None
             st.session_state.participant_manager = None
+            st.session_state.session_manager = None
             st.session_state.response_tracker = ResponseTimeTracker()
             st.session_state.admin_page = None
+            
+            logger.info("로그아웃 완료")
             st.rerun()
     
     # 관리자 페이지 표시
