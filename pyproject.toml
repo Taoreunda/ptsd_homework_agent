@@ -26,6 +26,7 @@ dependencies = [
     # 데이터 시각화 (대시보드용)
     "pandas>=2.0.0",
     "plotly>=5.15.0",
+    "psycopg2-binary>=2.9.10",
 ]
 
 [project.optional-dependencies]
