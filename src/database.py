@@ -450,8 +450,7 @@ class ParticipantManager:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT user_id, username, name, group_type, enrolled_date, 
-                           session_limit, status, created_at, updated_at
+                    SELECT user_id, name, group_type, status, phone, gender, age, created_at
                     FROM participants 
                     WHERE user_id = %s
                 """, (user_id,))
@@ -459,19 +458,17 @@ class ParticipantManager:
                 result = cursor.fetchone()
                 
                 if result:
-                    (user_id, username, name, group_type, enrolled_date, 
-                     session_limit, status, created_at, updated_at) = result
+                    (user_id, name, group_type, status, phone, gender, age, created_at) = result
                     
                     return {
                         'user_id': user_id,
-                        'username': username,
                         'name': name,
                         'group_type': group_type,
-                        'enrolled_date': enrolled_date.isoformat() if enrolled_date else None,
-                        'session_limit': session_limit,
                         'status': status,
-                        'created_at': created_at.isoformat() if created_at else None,
-                        'updated_at': updated_at.isoformat() if updated_at else None
+                        'phone': phone,
+                        'gender': gender,
+                        'age': age,
+                        'created_at': created_at.isoformat() if created_at else None
                     }
                 else:
                     return None
@@ -522,31 +519,32 @@ class ParticipantManager:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT user_id, username, name, group_type, status, enrolled_date,
-                           session_limit, completed_sessions, total_messages, 
-                           days_since_last_session, participation_status
-                    FROM participant_stats
+                    SELECT user_id, name, group_type, status, phone, gender, age, 
+                           created_at, completed_sessions, total_messages, 
+                           last_session, days_since_last_session
+                    FROM participant_summary
                     ORDER BY user_id
                 """)
                 
                 stats = []
                 for row in cursor.fetchall():
-                    (user_id, username, name, group_type, status, enrolled_date,
-                     session_limit, completed_sessions, total_messages,
-                     days_since_last_session, participation_status) = row
+                    (user_id, name, group_type, status, phone, gender, age,
+                     created_at, completed_sessions, total_messages,
+                     last_session, days_since_last_session) = row
                     
                     stats.append({
                         'user_id': user_id,
-                        'username': username,
                         'name': name,
                         'group_type': group_type,
                         'status': status,
-                        'enrolled_date': enrolled_date.isoformat() if enrolled_date else None,
-                        'session_limit': session_limit,
+                        'phone': phone,
+                        'gender': gender,
+                        'age': age,
+                        'created_at': created_at.isoformat() if created_at else None,
                         'completed_sessions': completed_sessions or 0,
                         'total_messages': total_messages or 0,
-                        'days_since_last_session': float(days_since_last_session) if days_since_last_session else None,
-                        'participation_status': participation_status
+                        'last_session': last_session.isoformat() if last_session else None,
+                        'days_since_last_session': float(days_since_last_session) if days_since_last_session else None
                     })
                 
                 logger.debug(f"참가자 통계 조회: {len(stats)}명")
@@ -567,22 +565,24 @@ class ParticipantManager:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 
-                cursor.execute("SELECT * FROM get_participant_summary()")
+                cursor.execute("SELECT * FROM get_research_summary()")
                 result = cursor.fetchone()
                 
                 if result:
                     (total_participants, active_participants, treatment_group,
-                     control_group, completed_participants, dropout_participants,
-                     avg_sessions_per_participant) = result
+                     control_group, dropout_participants, completed_participants,
+                     avg_age, male_participants, female_participants) = result
                     
                     return {
                         'total_participants': total_participants,
                         'active_participants': active_participants,
                         'treatment_group': treatment_group,
                         'control_group': control_group,
-                        'completed_participants': completed_participants,
                         'dropout_participants': dropout_participants,
-                        'avg_sessions_per_participant': float(avg_sessions_per_participant or 0)
+                        'completed_participants': completed_participants,
+                        'avg_age': float(avg_age or 0),
+                        'male_participants': male_participants,
+                        'female_participants': female_participants
                     }
                 else:
                     return {}

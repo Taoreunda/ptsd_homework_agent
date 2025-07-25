@@ -36,7 +36,6 @@ def load_participants():
         for participant in participants_stats:
             user_id = participant['user_id']
             participants[user_id] = {
-                "username": participant['username'],
                 "name": participant['name'],
                 "group": participant['group_type'],
                 "status": participant['status']
