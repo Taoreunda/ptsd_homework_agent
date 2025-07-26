@@ -16,34 +16,14 @@ from utils.logging_config import get_logger
 logger = get_logger()
 
 
-class DatabaseManager:
-    """데이터베이스 연결 및 데이터 저장을 관리하는 클래스"""
+class DatabaseMixin:
+    """데이터베이스 연결 관리를 위한 공통 베이스 클래스"""
     
     def __init__(self, database_url: Optional[str] = None):
-        """
-        데이터베이스 매니저 초기화
-        
-        Args:
-            database_url: PostgreSQL 연결 문자열 (환경변수에서 자동 로드)
-        """
         self.database_url = database_url or os.getenv("DATABASE_URL")
         if not self.database_url:
             logger.error("DATABASE_URL 환경변수가 설정되지 않았습니다")
             raise ValueError("DATABASE_URL 환경변수가 필요합니다")
-        
-        self._test_connection()
-    
-    def _test_connection(self) -> bool:
-        """데이터베이스 연결 테스트"""
-        try:
-            with self._get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT 1")
-                logger.info("데이터베이스 연결 성공")
-                return True
-        except Exception as e:
-            logger.error(f"데이터베이스 연결 실패: {e}")
-            raise
     
     @contextmanager
     def _get_connection(self):
@@ -60,6 +40,32 @@ class DatabaseManager:
         finally:
             if conn:
                 conn.close()
+
+
+class DatabaseManager(DatabaseMixin):
+    """데이터베이스 연결 및 데이터 저장을 관리하는 클래스"""
+    
+    def __init__(self, database_url: Optional[str] = None):
+        """
+        데이터베이스 매니저 초기화
+        
+        Args:
+            database_url: PostgreSQL 연결 문자열 (환경변수에서 자동 로드)
+        """
+        super().__init__(database_url)
+        self._test_connection()
+    
+    def _test_connection(self) -> bool:
+        """데이터베이스 연결 테스트"""
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1")
+                logger.info("데이터베이스 연결 성공")
+                return True
+        except Exception as e:
+            logger.error(f"데이터베이스 연결 실패: {e}")
+            raise
     
     def create_session(self, user_id: str, session_id: Optional[str] = None) -> str:
         """
@@ -257,7 +263,7 @@ class DatabaseManager:
     
     def get_research_stats(self) -> Dict[str, Any]:
         """
-        연구용 전체 통계 조회
+        연구용 전체 통계 조회 (단순화된 단일 쿼리)
         
         Returns:
             Dict: 통계 정보
@@ -266,16 +272,17 @@ class DatabaseManager:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 
-                # 전체 통계 쿼리
+                # 단일 쿼리로 모든 통계 조회
                 cursor.execute("""
                     SELECT 
-                        COUNT(DISTINCT user_id) as total_users,
-                        COUNT(*) as total_sessions,
-                        AVG(total_messages) as avg_messages_per_session,
-                        SUM(total_messages) as total_messages,
-                        MIN(start_time) as first_session,
-                        MAX(start_time) as last_session
-                    FROM sessions
+                        COUNT(DISTINCT s.user_id) as total_users,
+                        COUNT(s.*) as total_sessions,
+                        COALESCE(AVG(s.total_messages), 0) as avg_messages_per_session,
+                        COALESCE(SUM(s.total_messages), 0) as total_messages,
+                        MIN(s.start_time) as first_session,
+                        MAX(s.start_time) as last_session,
+                        COUNT(s.*) FILTER (WHERE s.end_time IS NULL) as active_sessions
+                    FROM sessions s
                 """)
                 
                 row = cursor.fetchone()
@@ -285,12 +292,9 @@ class DatabaseManager:
                     'avg_messages_per_session': float(row[2] or 0),
                     'total_messages': row[3] or 0,
                     'first_session': row[4],
-                    'last_session': row[5]
+                    'last_session': row[5],
+                    'active_sessions': row[6] or 0
                 }
-                
-                # 활성 세션 수 조회
-                cursor.execute("SELECT COUNT(*) FROM sessions WHERE end_time IS NULL")
-                stats['active_sessions'] = cursor.fetchone()[0] or 0
                 
                 logger.info(f"연구 통계 조회 완료: {stats['total_users']}명, {stats['total_sessions']}세션")
                 return stats
@@ -336,7 +340,7 @@ def init_database() -> DatabaseManager:
         raise
 
 
-# 전역 인스턴스 (필요시 사용)
+# 전역 인스턴스
 _db_manager: Optional[DatabaseManager] = None
 
 def get_db_manager() -> DatabaseManager:
@@ -347,7 +351,7 @@ def get_db_manager() -> DatabaseManager:
     return _db_manager
 
 
-class ParticipantManager:
+class ParticipantManager(DatabaseMixin):
     """참가자 인증 및 관리를 위한 클래스"""
     
     def __init__(self, database_url: Optional[str] = None):
@@ -357,26 +361,7 @@ class ParticipantManager:
         Args:
             database_url: PostgreSQL 연결 문자열
         """
-        self.database_url = database_url or os.getenv("DATABASE_URL")
-        if not self.database_url:
-            logger.error("DATABASE_URL 환경변수가 설정되지 않았습니다")
-            raise ValueError("DATABASE_URL 환경변수가 필요합니다")
-    
-    @contextmanager
-    def _get_connection(self):
-        """데이터베이스 연결 컨텍스트 매니저"""
-        conn = None
-        try:
-            conn = psycopg2.connect(self.database_url)
-            yield conn
-        except Exception as e:
-            if conn:
-                conn.rollback()
-            logger.error(f"데이터베이스 오류: {e}")
-            raise
-        finally:
-            if conn:
-                conn.close()
+        super().__init__(database_url)
     
     def authenticate_user(self, user_id: str, password: str) -> Optional[Dict[str, Any]]:
         """
@@ -450,7 +435,7 @@ class ParticipantManager:
                 cursor = conn.cursor()
                 
                 cursor.execute("""
-                    SELECT user_id, name, group_type, status, phone, gender, age, created_at
+                    SELECT user_id, name, password, group_type, status, phone, gender, age, created_at
                     FROM participants 
                     WHERE user_id = %s
                 """, (user_id,))
@@ -458,11 +443,12 @@ class ParticipantManager:
                 result = cursor.fetchone()
                 
                 if result:
-                    (user_id, name, group_type, status, phone, gender, age, created_at) = result
+                    (user_id, name, password, group_type, status, phone, gender, age, created_at) = result
                     
                     return {
                         'user_id': user_id,
                         'name': name,
+                        'password': password,
                         'group_type': group_type,
                         'status': status,
                         'phone': phone,
@@ -509,7 +495,7 @@ class ParticipantManager:
     
     def get_participant_stats(self) -> List[Dict[str, Any]]:
         """
-        모든 참가자의 통계 정보 조회
+        모든 참가자의 통계 정보 조회 (단순화된 단일 쿼리)
         
         Returns:
             List[Dict]: 참가자별 통계 정보
@@ -518,19 +504,49 @@ class ParticipantManager:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
                 
+                # 단일 JOIN 쿼리로 모든 정보를 한 번에 조회
                 cursor.execute("""
-                    SELECT user_id, name, group_type, status, phone, gender, age, 
-                           created_at, completed_sessions, total_messages, 
-                           last_session, days_since_last_session
-                    FROM participant_summary
-                    ORDER BY user_id
+                    SELECT 
+                        p.user_id,
+                        p.name,
+                        p.group_type,
+                        p.status,
+                        p.phone,
+                        p.gender,
+                        p.age,
+                        p.created_at,
+                        COALESCE(s.session_count, 0) as completed_sessions,
+                        COALESCE(s.total_messages, 0) as total_messages,
+                        s.last_session,
+                        CASE 
+                            WHEN s.last_session IS NOT NULL 
+                            THEN EXTRACT(DAYS FROM (NOW() - s.last_session))::INTEGER 
+                            ELSE NULL 
+                        END as days_since_last_session
+                    FROM participants p
+                    LEFT JOIN (
+                        SELECT 
+                            user_id,
+                            COUNT(*) as session_count,
+                            SUM(total_messages) as total_messages,
+                            MAX(start_time) as last_session
+                        FROM sessions 
+                        GROUP BY user_id
+                    ) s ON p.user_id = s.user_id
+                    ORDER BY 
+                        CASE 
+                            WHEN p.group_type = 'admin' THEN 0
+                            WHEN p.group_type = 'treatment' THEN 1
+                            WHEN p.group_type = 'control' THEN 2
+                            ELSE 3
+                        END,
+                        p.created_at DESC
                 """)
                 
                 stats = []
                 for row in cursor.fetchall():
-                    (user_id, name, group_type, status, phone, gender, age,
-                     created_at, completed_sessions, total_messages,
-                     last_session, days_since_last_session) = row
+                    (user_id, name, group_type, status, phone, gender, age, created_at, 
+                     completed_sessions, total_messages, last_session, days_since_last) = row
                     
                     stats.append({
                         'user_id': user_id,
@@ -541,10 +557,10 @@ class ParticipantManager:
                         'gender': gender,
                         'age': age,
                         'created_at': created_at.isoformat() if created_at else None,
-                        'completed_sessions': completed_sessions or 0,
-                        'total_messages': total_messages or 0,
+                        'completed_sessions': completed_sessions,
+                        'total_messages': total_messages,
                         'last_session': last_session.isoformat() if last_session else None,
-                        'days_since_last_session': float(days_since_last_session) if days_since_last_session else None
+                        'days_since_last_session': days_since_last
                     })
                 
                 logger.debug(f"참가자 통계 조회: {len(stats)}명")
@@ -570,16 +586,18 @@ class ParticipantManager:
                 
                 if result:
                     (total_participants, active_participants, treatment_group,
-                     control_group, dropout_participants, completed_participants,
-                     avg_age, male_participants, female_participants) = result
+                     control_group, completed_participants, dropout_participants,
+                     total_sessions, total_messages, avg_age, male_participants, female_participants) = result
                     
                     return {
                         'total_participants': total_participants,
                         'active_participants': active_participants,
                         'treatment_group': treatment_group,
                         'control_group': control_group,
-                        'dropout_participants': dropout_participants,
                         'completed_participants': completed_participants,
+                        'dropout_participants': dropout_participants,
+                        'total_sessions': total_sessions,
+                        'total_messages': total_messages,
                         'avg_age': float(avg_age or 0),
                         'male_participants': male_participants,
                         'female_participants': female_participants
@@ -638,9 +656,112 @@ class ParticipantManager:
         except Exception as e:
             logger.error(f"참가자 추가 중 오류: {e}")
             return False
+    
+    def update_participant(
+        self, 
+        user_id: str, 
+        name: str = None,
+        password: str = None,
+        phone: str = None,
+        gender: str = None,
+        age: int = None
+    ) -> bool:
+        """
+        기존 참가자 정보 수정 (직접 SQL 사용)
+        
+        Args:
+            user_id: 참가자 ID
+            name: 이름
+            password: 비밀번호
+            phone: 전화번호
+            gender: 성별
+            age: 나이
+            
+        Returns:
+            bool: 수정 성공 여부
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 참가자 존재 확인
+                cursor.execute("SELECT user_id FROM participants WHERE user_id = %s", (user_id,))
+                if not cursor.fetchone():
+                    logger.warning(f"수정하려는 참가자가 존재하지 않음: {user_id}")
+                    return False
+                
+                # 동적 업데이트 (NULL이 아닌 값만 업데이트)
+                cursor.execute("""
+                    UPDATE participants SET
+                        name = COALESCE(%s, name),
+                        password = COALESCE(%s, password), 
+                        phone = COALESCE(%s, phone),
+                        gender = COALESCE(%s, gender),
+                        age = COALESCE(%s, age),
+                        updated_at = NOW()
+                    WHERE user_id = %s
+                """, (name, password, phone, gender, age, user_id))
+                
+                success = cursor.rowcount > 0
+                conn.commit()
+                
+                if success:
+                    logger.info(f"참가자 정보 수정 성공: {user_id}")
+                else:
+                    logger.warning(f"참가자 정보 수정 실패: {user_id}")
+                
+                return success
+                
+        except Exception as e:
+            logger.error(f"참가자 정보 수정 중 오류: {e}")
+            return False
+    
+    def delete_participant(self, user_id: str) -> bool:
+        """
+        참가자 삭제 (직접 SQL 사용, CASCADE 제약조건 활용)
+        
+        Args:
+            user_id: 참가자 ID
+            
+        Returns:
+            bool: 삭제 성공 여부
+        """
+        try:
+            with self._get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # 관리자 계정 삭제 방지
+                if user_id == 'admin':
+                    logger.warning(f"관리자 계정 삭제 시도 차단: {user_id}")
+                    return False
+                
+                # 참가자 존재 확인
+                cursor.execute("SELECT user_id, name FROM participants WHERE user_id = %s", (user_id,))
+                participant = cursor.fetchone()
+                if not participant:
+                    logger.warning(f"삭제하려는 참가자가 존재하지 않음: {user_id}")
+                    return False
+                
+                participant_name = participant[1]
+                
+                # CASCADE 삭제 (foreign key 제약조건으로 자동 처리됨)
+                cursor.execute("DELETE FROM participants WHERE user_id = %s", (user_id,))
+                success = cursor.rowcount > 0
+                conn.commit()
+                
+                if success:
+                    logger.info(f"참가자 삭제 성공: {user_id} ({participant_name})")
+                else:
+                    logger.warning(f"참가자 삭제 실패: {user_id}")
+                
+                return success
+                
+        except Exception as e:
+            logger.error(f"참가자 삭제 중 오류: {e}")
+            return False
 
 
-# 전역 인스턴스
+# ParticipantManager 전역 인스턴스
 _participant_manager: Optional[ParticipantManager] = None
 
 def get_participant_manager() -> ParticipantManager:
@@ -648,10 +769,6 @@ def get_participant_manager() -> ParticipantManager:
     global _participant_manager
     if _participant_manager is None:
         logger.info("새로운 ParticipantManager 인스턴스 생성 중...")
-        database_url = os.getenv("DATABASE_URL")
-        logger.info(f"DATABASE_URL 환경변수: {'설정됨' if database_url else '설정되지 않음'}")
-        if database_url:
-            logger.info(f"DATABASE_URL 시작 부분: {database_url[:50]}...")
         _participant_manager = ParticipantManager()
         logger.info("ParticipantManager 인스턴스 생성 완료")
     return _participant_manager

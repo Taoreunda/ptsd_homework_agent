@@ -4,6 +4,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import RunnablePassthrough, RunnableLambda
+from langchain_core.messages import HumanMessage, AIMessage
 from langchain.memory import ConversationBufferMemory
 import os
 from utils.logging_config import get_logger
@@ -137,11 +138,49 @@ def response_generator(runnable, question: str):
         logger.error(f"응답 생성 중 오류: {e}")
         yield "죄송합니다. 응답 생성 중 오류가 발생했습니다."
 
+def load_chat_history_to_ui(memory):
+    """메모리에서 대화 내용을 불러와 UI에 표시"""
+    try:
+        if memory and hasattr(memory, 'chat_memory'):
+            chat_messages = memory.chat_memory.messages
+            
+            # 기존 대화가 있는 경우에만 UI 메시지를 로드
+            if chat_messages:
+                new_messages = []
+                
+                for message in chat_messages:
+                    if hasattr(message, 'content') and message.content.strip():
+                        if message.__class__.__name__ == 'HumanMessage':
+                            new_messages.append({
+                                "role": "user", 
+                                "content": message.content
+                            })
+                        elif message.__class__.__name__ == 'AIMessage':
+                            new_messages.append({
+                                "role": "assistant", 
+                                "content": message.content
+                            })
+                
+                # 실제로 메시지가 있는 경우에만 UI 업데이트
+                if new_messages:
+                    st.session_state.messages = new_messages
+                    logger.info(f"대화 기록 UI 복원: {len(new_messages)}개 메시지")
+                else:
+                    logger.debug("복원할 대화 기록이 없음 (빈 메시지)")
+            else:
+                logger.debug("복원할 대화 기록이 없음 (메시지 없음)")
+                
+    except Exception as e:
+        logger.error(f"대화 기록 UI 복원 실패: {e}")
+        # 오류 시에만 messages 초기화
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
 def _render_chat_interface(user_name: str, user_id: str):
     """대화 인터페이스를 렌더링합니다."""
     apply_chat_interface_styles()  # 채팅 인터페이스 전용 스타일 적용
     
-    # 시작 메시지 초기화 (처음 로그인 시)
+    # 시작 메시지 초기화 (처음 로그인 시, 기존 대화가 없는 경우만)
     if not st.session_state.messages:
         start_message = f"{user_name}님, 안녕하세요. 오늘 어떤 이야기를 해보고 싶으신가요?"
         st.session_state.messages.append({"role": "assistant", "content": start_message})
@@ -156,20 +195,9 @@ def _render_chat_interface(user_name: str, user_id: str):
         # 응답 시간 계산
         response_time = st.session_state.response_tracker.get_response_time()
         
-        # 사용자 메시지를 세션 상태 및 메모리에 추가
+        # 사용자 메시지를 세션 상태 및 메모리에 추가 (응답 시간 포함)
         st.session_state.messages.append({"role": "user", "content": prompt})
-        st.session_state.memory.chat_memory.add_user_message(prompt)
-        
-        # 데이터베이스에 사용자 메시지 저장
-        if st.session_state.db_manager:
-            success = st.session_state.db_manager.save_message(
-                st.session_state.session_id,
-                "user",
-                prompt,
-                response_time
-            )
-            if not success:
-                logger.warning("사용자 메시지 DB 저장 실패")
+        st.session_state.memory.chat_memory.add_message(HumanMessage(content=prompt), response_time)
         
         # 사용자 메시지 표시
         with st.chat_message("user"):
@@ -190,20 +218,9 @@ def _render_chat_interface(user_name: str, user_id: str):
             # 로깅
             logger.info(f"AI 응답 완료: {user_id} - 사용자 메시지: {len(prompt)}자, AI 응답: {len(response)}자, 응답시간: {ai_response_time:.1f}초")
         
-        # AI 응답을 세션 상태 및 메모리에 추가
+        # AI 응답을 세션 상태 및 메모리에 추가 (응답 시간 포함)
         st.session_state.messages.append({"role": "assistant", "content": response})
-        st.session_state.memory.chat_memory.add_ai_message(response)
-        
-        # 데이터베이스에 AI 응답 저장
-        if st.session_state.db_manager:
-            success = st.session_state.db_manager.save_message(
-                st.session_state.session_id,
-                "assistant",
-                response,
-                ai_response_time
-            )
-            if not success:
-                logger.warning("AI 응답 DB 저장 실패")
+        st.session_state.memory.chat_memory.add_message(AIMessage(content=response), ai_response_time)
         
         # 다음 사용자 응답을 위한 시간 추적 시작
         st.session_state.response_tracker.start_timing()
@@ -273,17 +290,19 @@ if not st.session_state.authenticated:
                 st.session_state.db_manager = DatabaseManager()
                 st.session_state.participant_manager = get_participant_manager()
                 
-                # 기존 세션 ID (하위 호환성)
-                st.session_state.session_id = st.session_state.db_manager.create_session(
-                    user_info["user_id"]
-                )
+                # 세션 ID 복원 (토큰에서)
+                st.session_state.session_id = user_info["session_id"]
                 
-                # 대화 메모리 복원
+                # 대화 메모리 복원 (session_id 직접 전달하여 중복 인증 방지)
                 st.session_state.memory = session_manager.create_memory(
                     user_info["user_id"],
                     session_token,
-                    user_info["user_data"]["name"]
+                    user_info["user_data"]["name"],
+                    user_info["session_id"]
                 )
+                
+                # 대화 기록을 UI에 로드
+                load_chat_history_to_ui(st.session_state.memory)
                 
                 # 모델 체인 설정
                 st.session_state.runnable = setup_model_and_chain(
@@ -330,22 +349,30 @@ if not st.session_state.authenticated:
                         st.session_state.db_manager = DatabaseManager()
                         st.session_state.participant_manager = get_participant_manager()
                         
-                        # 새 세션 토큰 생성
+                        # 새 세션 토큰 생성 (단순화된 방식)
                         st.session_state.session_token = st.session_state.session_manager.create_session(
                             auth_result["user_id"]
                         )
                         
-                        # 기존 세션 ID (하위 호환성)
-                        st.session_state.session_id = st.session_state.db_manager.create_session(
-                            auth_result["user_id"]
-                        )
+                        # 세션 ID는 이미 생성된 토큰에서 직접 획득 (중복 인증 방지)
+                        # create_session이 토큰을 반환하므로, 별도 인증 없이 메모리 생성에서 처리
                         
-                        # 대화 메모리 생성 (PostgreSQL 백엔드)
+                        # 토큰으로 세션 정보 획득 (session_id 필요)
+                        session_info = st.session_state.session_manager.authenticate_by_session(
+                            st.session_state.session_token
+                        )
+                        st.session_state.session_id = session_info["session_id"]
+                        
+                        # 대화 메모리 생성 (session_id 직접 전달하여 중복 인증 방지)
                         st.session_state.memory = st.session_state.session_manager.create_memory(
                             auth_result["user_id"],
                             st.session_state.session_token,
-                            auth_result["user_data"]["name"]
+                            auth_result["user_data"]["name"],
+                            st.session_state.session_id
                         )
+                        
+                        # 대화 기록을 UI에 로드 (기존 세션이 있는 경우)
+                        load_chat_history_to_ui(st.session_state.memory)
                         
                         # URL에 세션 토큰 추가 (브라우저 새로고침 대응)
                         st.query_params.update({"session_token": st.session_state.session_token})
@@ -378,6 +405,11 @@ else:
     user_name = st.session_state.user_info["user_data"]["name"]
     user_id = st.session_state.user_info["user_id"]
     user_group = st.session_state.user_info["user_data"]["group"]
+    
+    # 관리자인 경우 관리자 스타일 적용
+    if user_group == "admin":
+        from src.ui_styles import apply_admin_page_styles
+        apply_admin_page_styles()
     
     # 사이드바에 사용자 정보
     with st.sidebar:

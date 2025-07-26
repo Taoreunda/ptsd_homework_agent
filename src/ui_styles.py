@@ -161,14 +161,9 @@ def apply_chat_interface_styles():
     """채팅 인터페이스용 스타일을 적용합니다."""
     chat_css = """
     <style>
-        /* 채팅 메시지 스타일링 - 폰트 크기 14px로 증가 */
+        /* 채팅 메시지 스타일링 */
         .stChatMessage {
             margin-bottom: 1rem;
-        }
-        
-        .stChatMessage .stMarkdown {
-            font-size: 14px !important;
-            line-height: 1.5 !important;
         }
         
         /* 사용자 메시지 스타일 */
@@ -177,37 +172,21 @@ def apply_chat_interface_styles():
             border-radius: 12px;
         }
         
-        .stChatMessage[data-testid="user-message"] .stMarkdown {
-            font-size: 14px !important;
-            font-weight: 500;
-        }
-        
         /* AI 어시스턴트 메시지 스타일 */
         .stChatMessage[data-testid="assistant-message"] {
             background-color: rgba(248, 249, 250, 1);
             border-radius: 12px;
         }
         
-        .stChatMessage[data-testid="assistant-message"] .stMarkdown {
-            font-size: 14px !important;
-            color: #333;
-        }
-        
         /* 채팅 입력창 스타일링 */
         .stChatInput {
             border-radius: 25px;
             border: 2px solid #e0e0e0;
-            font-size: 14px !important;
         }
         
         .stChatInput:focus {
             border-color: #007bff;
             box-shadow: 0 0 0 0.2rem rgba(0, 123, 255, 0.25);
-        }
-        
-        /* 채팅 입력창 텍스트 크기 */
-        .stChatInput textarea {
-            font-size: 14px !important;
         }
     </style>
     """
@@ -260,7 +239,7 @@ def configure_page_settings():
     st.set_page_config(
         page_title="심리치료 대화 지원 에이전트",
         page_icon="🥼",
-        layout="centered",
+        layout="wide",
         initial_sidebar_state="collapsed",
     )
 
