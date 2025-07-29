@@ -9,6 +9,8 @@ from langchain.memory import ConversationBufferMemory
 import os
 from utils.logging_config import get_logger
 from dotenv import load_dotenv
+import extra_streamlit_components as stx
+from datetime import datetime, timedelta
 from src.database import DatabaseManager, ResponseTimeTracker, get_participant_manager
 from src.session_manager import get_session_manager
 from src.admin_pages import render_admin_sidebar, render_admin_page
@@ -25,6 +27,37 @@ logger = get_logger()
 # 페이지 설정 및 기본 스타일 적용
 configure_page_settings()
 apply_mobile_optimized_css()  # 기본 모바일 최적화 스타일만 적용
+
+# CookieManager 초기화 (세션 상태로 관리)
+if "cookie_manager" not in st.session_state:
+    st.session_state.cookie_manager = stx.CookieManager()
+
+cookie_manager = st.session_state.cookie_manager
+
+
+# 쿠키 관리 유틸리티 함수들
+def save_session_cookie(session_token: str) -> None:
+    """세션 토큰을 쿠키에 저장합니다."""
+    try:
+        expires_at = datetime.now() + timedelta(days=7)
+        cookie_manager.set('session_token', session_token, expires_at=expires_at)
+        logger.info(f"세션 토큰 쿠키 저장 완료: {session_token[:8]}... (만료: {expires_at})")
+    except Exception as e:
+        logger.error(f"쿠키 저장 실패: {e}")
+
+def remove_session_cookie() -> None:
+    """세션 토큰 쿠키를 제거합니다."""
+    try:
+        cookie_manager.delete('session_token')
+        logger.debug("세션 토큰 쿠키 제거 완료")
+    except Exception as e:
+        logger.warning(f"쿠키 제거 실패: {e}")
+
+def initialize_session_managers() -> None:
+    """세션 관련 매니저들을 초기화합니다."""
+    st.session_state.db_manager = DatabaseManager()
+    st.session_state.participant_manager = get_participant_manager()
+
 
 # 유틸리티 함수들
 def load_participants():
@@ -270,10 +303,28 @@ if "session_manager" not in st.session_state:
 
 # --- 자동 세션 복원 시도 ---
 if not st.session_state.authenticated:
-    # URL 파라미터에서 세션 토큰 확인
-    query_params = st.query_params
-    if "session_token" in query_params and not st.session_state.session_token:
-        session_token = query_params["session_token"]
+    session_token = None
+    
+    # 1순위: 쿠키에서 세션 토큰 확인
+    try:
+        cookie_token = cookie_manager.get('session_token')
+        if cookie_token:
+            session_token = cookie_token
+            logger.info(f"쿠키에서 세션 토큰 발견: {session_token[:8]}...")
+        else:
+            logger.debug("쿠키에서 session_token을 찾을 수 없음")
+    except Exception as e:
+        logger.error(f"쿠키 확인 중 오류: {e}")
+    
+    # 2순위: URL 파라미터에서 세션 토큰 확인 (쿠키가 없는 경우)
+    if not session_token:
+        query_params = st.query_params
+        if "session_token" in query_params and not st.session_state.session_token:
+            session_token = query_params["session_token"]
+            logger.info(f"URL에서 세션 토큰 발견: {session_token[:8]}...")
+    
+    # 세션 토큰이 있으면 복원 시도
+    if session_token and not st.session_state.session_token:
         
         try:
             session_manager = get_session_manager()
@@ -287,8 +338,7 @@ if not st.session_state.authenticated:
                 st.session_state.session_manager = session_manager
                 
                 # 데이터베이스 초기화
-                st.session_state.db_manager = DatabaseManager()
-                st.session_state.participant_manager = get_participant_manager()
+                initialize_session_managers()
                 
                 # 세션 ID 복원 (토큰에서)
                 st.session_state.session_id = user_info["session_id"]
@@ -313,15 +363,25 @@ if not st.session_state.authenticated:
                 # 응답 시간 추적 시작
                 st.session_state.response_tracker.start_timing()
                 
+                # 쿠키에 세션 토큰 저장
+                save_session_cookie(session_token)
+                
                 logger.info(f"자동 세션 복원 성공: {user_info['user_id']}")
                 st.rerun()
             else:
-                logger.warning(f"세션 토큰 인증 실패: {session_token}")
+                logger.warning(f"세션 토큰 인증 실패 (만료/무효): {session_token}")
                 # URL에서 잘못된 토큰 제거
                 st.query_params.clear()
+                # 쿠키에서도 만료된 토큰 제거
+                remove_session_cookie()
+                # 만료 메시지 표시
+                st.warning("⏰ 세션이 만료되었습니다. 다시 로그인해 주세요.")
                 
         except Exception as e:
             logger.error(f"자동 세션 복원 실패: {e}")
+            # 문제가 있는 쿠키도 제거
+            remove_session_cookie()
+            st.error("🔗 세션 복원 중 오류가 발생했습니다. 다시 로그인해 주세요.")
 
 # --- 인증 처리 ---
 if not st.session_state.authenticated:
@@ -346,8 +406,7 @@ if not st.session_state.authenticated:
                     # 세션 관리자 및 데이터베이스 초기화
                     try:
                         st.session_state.session_manager = get_session_manager()
-                        st.session_state.db_manager = DatabaseManager()
-                        st.session_state.participant_manager = get_participant_manager()
+                        initialize_session_managers()
                         
                         # 새 세션 토큰 생성 (단순화된 방식)
                         st.session_state.session_token = st.session_state.session_manager.create_session(
@@ -376,6 +435,9 @@ if not st.session_state.authenticated:
                         
                         # URL에 세션 토큰 추가 (브라우저 새로고침 대응)
                         st.query_params.update({"session_token": st.session_state.session_token})
+                        
+                        # 쿠키에 세션 토큰 저장
+                        save_session_cookie(st.session_state.session_token)
                         
                         logger.info(f"새 세션 생성: {auth_result['user_id']} -> {st.session_state.session_token}")
                         
@@ -433,6 +495,9 @@ else:
             
             # URL에서 세션 토큰 제거
             st.query_params.clear()
+            
+            # 쿠키에서 세션 토큰 제거
+            remove_session_cookie()
             
             # 세션 상태 초기화
             st.session_state.authenticated = False

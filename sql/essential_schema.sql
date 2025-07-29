@@ -259,20 +259,33 @@ RETURNS TABLE(
     age INTEGER
 ) AS $$
 BEGIN
-    -- 세션 마지막 접근 시간 업데이트
+    -- 만료된 세션을 먼저 비활성화 (7일간 비활성 또는 생성 후 30일 절대 만료)
+    UPDATE sessions 
+    SET is_active = FALSE 
+    WHERE is_active = TRUE 
+    AND (
+        last_accessed < NOW() - INTERVAL '7 days' OR
+        start_time < NOW() - INTERVAL '30 days'
+    );
+    
+    -- 세션 마지막 접근 시간 업데이트 (유효한 세션만)
     UPDATE sessions 
     SET last_accessed = NOW()
     WHERE session_token = input_token 
-    AND is_active = TRUE;
+    AND is_active = TRUE
+    AND last_accessed >= NOW() - INTERVAL '7 days'
+    AND start_time >= NOW() - INTERVAL '30 days';
     
-    -- 사용자 정보 반환
+    -- 사용자 정보 반환 (만료 검증 포함)
     RETURN QUERY
     SELECT s.user_id, s.session_id, p.name, p.group_type, p.status, p.phone, p.gender, p.age
     FROM sessions s
     JOIN participants p ON s.user_id = p.user_id
     WHERE s.session_token = input_token 
     AND s.is_active = TRUE
-    AND p.status = 'active';
+    AND p.status = 'active'
+    AND s.last_accessed >= NOW() - INTERVAL '7 days'
+    AND s.start_time >= NOW() - INTERVAL '30 days';
 END;
 $$ LANGUAGE plpgsql;
 

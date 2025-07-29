@@ -81,12 +81,22 @@ class PostgresChatHistory(BaseChatMessageHistory, DatabaseMixin):
         try:
             with self._get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # 메시지 저장
                 cursor.execute("""
                     SELECT save_message(%s, %s, %s, %s)
                 """, (self.session_id, role, message.content, response_time))
+                
+                # 세션 활성 상태 갱신 (대화 중 세션 유지)
+                cursor.execute("""
+                    UPDATE sessions 
+                    SET last_accessed = NOW(), total_messages = total_messages + 1
+                    WHERE session_id = %s AND is_active = TRUE
+                """, (self.session_id,))
+                
                 conn.commit()
                 
-                logger.debug(f"메시지 저장: {role} ({len(message.content)}자) - 응답시간: {response_time}초")
+                logger.debug(f"메시지 저장 및 세션 갱신: {role} ({len(message.content)}자) - 응답시간: {response_time}초")
                 
         except Exception as e:
             logger.error(f"메시지 저장 실패: {e}")
@@ -197,7 +207,7 @@ class SessionManager(DatabaseMixin):
                     logger.info(f"토큰 인증 성공: {user_id}")
                     return user_info
                 else:
-                    logger.warning(f"토큰 인증 실패: {session_token}")
+                    logger.warning(f"토큰 인증 실패 (만료/무효/비활성): {session_token}")
                     return None
                     
         except Exception as e:
