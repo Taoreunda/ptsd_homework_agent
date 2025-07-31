@@ -93,6 +93,52 @@ def load_prompt(file_path: str) -> str:
         logger.error(f"프롬프트 파일을 찾을 수 없음: {file_path}, 오류: {e}")
         return "프롬프트 파일을 찾을 수 없습니다."
 
+def _load_active_llm_config():
+    """데이터베이스에서 활성 LLM 설정을 로드합니다."""
+    logger.debug("활성 LLM 설정 로드 시작...")
+    
+    try:
+        # 데이터베이스 매니저가 있는 경우에만 시도
+        if hasattr(st.session_state, 'db_manager') and st.session_state.db_manager:
+            logger.debug("데이터베이스 매니저 확인 완료, 설정 조회 중...")
+            with st.session_state.db_manager._get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT * FROM get_active_llm_config()")
+                result = cursor.fetchone()
+                
+                if result:
+                    config = {
+                        'config_id': result[0],
+                        'config_name': result[1], 
+                        'system_prompt': result[2],
+                        'model_name': result[3],
+                        'temperature': float(result[4]),
+                        'max_tokens': result[5],
+                        'top_p': float(result[6]),
+                        'frequency_penalty': float(result[7]),
+                        'presence_penalty': float(result[8])
+                    }
+                    logger.info(f"데이터베이스에서 LLM 설정 로드 성공: {config['config_name']} (ID: {config['config_id']})")
+                    return config
+                else:
+                    logger.warning("데이터베이스에 활성 LLM 설정이 없음")
+        else:
+            logger.debug("데이터베이스 매니저가 없음, 기본값 사용")
+    except Exception as e:
+        logger.warning(f"데이터베이스 LLM 설정 로드 실패, 기본값 사용: {e}")
+    
+    # 데이터베이스 연결 실패시 기본값 반환
+    logger.info("기본 LLM 설정 사용")
+    return {
+        'model_name': 'gpt-4.1',
+        'temperature': 0.5,
+        'max_tokens': 1000,
+        'top_p': 0.9,
+        'frequency_penalty': 0.0,
+        'presence_penalty': 0.0,
+        'system_prompt': None  # 파일에서 로드하도록 None 반환
+    }
+
 def authenticate_user(user_id: str, password: str) -> dict:
     """사용자 인증을 수행합니다 (데이터베이스 기반)."""
     logger.info(f"인증 시도: user_id={user_id}")
@@ -124,17 +170,46 @@ def authenticate_user(user_id: str, password: str) -> dict:
 def setup_model_and_chain(user_name: str, memory: ConversationBufferMemory):
     """OpenAI 모델 및 대화 체인을 설정합니다."""
     
+    # 데이터베이스에서 활성 LLM 설정 로드
+    llm_config = _load_active_llm_config()
+    
+    # LLM 설정 로깅
+    logger.info(f"=== LLM 설정 적용 ===")
+    logger.info(f"모델: {llm_config.get('model_name', 'gpt-4.1')}")
+    logger.info(f"Temperature: {llm_config.get('temperature', 0.5)}")
+    logger.info(f"Max Tokens: {llm_config.get('max_tokens', 1000)}")
+    logger.info(f"Top P: {llm_config.get('top_p', 0.9)}")
+    logger.info(f"Frequency Penalty: {llm_config.get('frequency_penalty', 0.0)}")
+    logger.info(f"Presence Penalty: {llm_config.get('presence_penalty', 0.0)}")
+    
     # OpenAI 모델 생성 (비동기 스트리밍 지원)
     model = ChatOpenAI(
         api_key=os.getenv("OPENAI_API_KEY"),  
-        model="gpt-4.1",
-        temperature=0.5,
-        streaming=True
+        model=llm_config.get('model_name', 'gpt-4.1'),
+        temperature=llm_config.get('temperature', 0.5),
+        max_tokens=llm_config.get('max_tokens', 1000),
+        top_p=llm_config.get('top_p', 0.9),
+        frequency_penalty=llm_config.get('frequency_penalty', 0.0),
+        presence_penalty=llm_config.get('presence_penalty', 0.0),
+        streaming=True  # 스트리밍은 항상 활성화
     )
     
-    # 프롬프트 설정
-    system_prompt_template = load_prompt("prompts/therapy_system_prompt.md")
+    # 프롬프트 설정 (데이터베이스 설정 우선, 파일 백업)
+    if llm_config.get('system_prompt'):
+        system_prompt_template = llm_config['system_prompt']
+        logger.info(f"시스템 프롬프트 소스: 데이터베이스 (설정 ID: {llm_config.get('config_id', 'N/A')})")
+    else:
+        system_prompt_template = load_prompt("prompts/therapy_system_prompt.md")
+        logger.info(f"시스템 프롬프트 소스: 파일 (prompts/therapy_system_prompt.md)")
+    
     system_prompt = system_prompt_template.replace("길동님", f"{user_name}님")
+    
+    # 시스템 프롬프트 내용 로깅 (처음 200자만)
+    prompt_preview = system_prompt[:200] + "..." if len(system_prompt) > 200 else system_prompt
+    logger.info(f"적용된 시스템 프롬프트 (처음 200자): {prompt_preview}")
+    logger.info(f"시스템 프롬프트 전체 길이: {len(system_prompt)}자")
+    logger.info(f"사용자명 치환: 길동님 → {user_name}님")
+    logger.info("=====================")
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", system_prompt),
@@ -157,6 +232,12 @@ def setup_model_and_chain(user_name: str, memory: ConversationBufferMemory):
 def response_generator(runnable, question: str):
     """응답 생성 함수 (LangChain 스트리밍 방식)"""
     try:
+        # runnable이 None인지 확인
+        if runnable is None:
+            logger.error("runnable이 None입니다. 체인을 다시 초기화해야 합니다.")
+            yield "죄송합니다. 시스템을 초기화하는 중입니다. 잠시 후 다시 시도해주세요."
+            return
+            
         # LangChain의 동기 스트리밍 사용 (Streamlit 호환)
         for chunk in runnable.stream({"question": question}):
             # 응답 텍스트 추출
@@ -238,6 +319,13 @@ def _render_chat_interface(user_name: str, user_id: str):
         
         # AI 응답 시간 추적 시작
         st.session_state.response_tracker.start_timing()
+        
+        # runnable이 None인 경우 재생성
+        if st.session_state.runnable is None:
+            logger.warning("runnable이 None입니다. 다시 생성합니다...")
+            user_name = st.session_state.user_info.get("name", "사용자")
+            st.session_state.runnable = setup_model_and_chain(user_name, st.session_state.memory)
+            logger.info("runnable 재생성 완료")
         
         # AI 응답 생성 및 스트리밍 표시 (Streamlit 표준 방식)
         with st.chat_message("assistant"):
@@ -519,6 +607,10 @@ else:
     
     # 관리자 페이지 표시
     if user_group == "admin":
+        # 관리자 첫 로그인시 참가자 관리 탭을 기본으로 설정 (한 번만)
+        if "admin_page" not in st.session_state:
+            st.session_state.admin_page = "manage"
+        
         admin_page_rendered = render_admin_page()
         if admin_page_rendered:
             # 관리자 페이지가 렌더링된 경우 여기서 종료

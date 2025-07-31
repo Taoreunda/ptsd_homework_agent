@@ -28,6 +28,10 @@ def render_admin_sidebar():
         st.session_state.admin_page = "manage"
         st.rerun()
     
+    if st.button("🔧 프롬프트 튜닝"):
+        st.session_state.admin_page = "prompt_tuning"
+        st.rerun()
+    
     if st.button("🏠 대화 모드"):
         st.session_state.admin_page = None
         st.rerun()
@@ -59,11 +63,13 @@ def render_admin_page():
     
     if admin_page == "manage":
         render_participant_management()
+        return True  # 관리자 페이지가 렌더링됨을 표시
+    elif admin_page == "prompt_tuning":
+        render_prompt_tuning()
+        return True  # 관리자 페이지가 렌더링됨을 표시
     else:
         # 관리자가 대화 모드를 선택한 경우 None 반환 (메인 앱에서 처리)
         return None
-    
-    return True  # 관리자 페이지가 렌더링됨을 표시
 
 
 
@@ -95,8 +101,9 @@ def _render_participant_crud_section():
             form_name = st.text_input("참가자명", value=st.session_state.get("form_name", ""))
         with col4:
             current_group = st.session_state.get("form_group", "treatment")
-            group_index = 0 if current_group == "treatment" else 1
-            form_group = st.selectbox("그룹", ["treatment", "control"], index=group_index)
+            group_options = ["treatment", "control", "admin"]
+            group_index = group_options.index(current_group) if current_group in group_options else 0
+            form_group = st.selectbox("그룹", group_options, index=group_index)
         
         # 세 번째 행: 성별, 나이
         col5, col6 = st.columns(2)
@@ -417,5 +424,282 @@ def _render_participant_list_section():
     except Exception as e:
         st.error(f"참가자 목록 조회 오류: {e}")
         logger.error(f"참가자 목록 조회 오류: {e}")
+
+
+def render_prompt_tuning():
+    """프롬프트 튜닝 페이지를 렌더링합니다."""
+    st.header("🔧 프롬프트 튜닝")
+    
+    # LLM 설정 관리를 위한 데이터베이스 매니저 접근
+    try:
+        db_manager = st.session_state.db_manager
+        
+        # 현재 활성 설정 조회
+        active_config = _get_active_config(db_manager)
+        
+        if not active_config:
+            st.error("❌ 활성 LLM 설정을 찾을 수 없습니다. 기본 설정을 생성합니다.")
+            if st.button("기본 설정 생성"):
+                _create_default_config(db_manager)
+                st.rerun()
+            return
+        
+        # 탭 구성
+        config_tab, history_tab = st.tabs(["⚙️ 설정 편집", "📋 설정 이력"])
+        
+        with config_tab:
+            _render_config_editor(db_manager, active_config)
+        
+        with history_tab:
+            _render_config_history(db_manager)
+            
+    except Exception as e:
+        st.error(f"❌ 프롬프트 튜닝 페이지 로드 오류: {e}")
+        logger.error(f"프롬프트 튜닝 페이지 오류: {e}")
+
+
+def _get_active_config(db_manager):
+    """현재 활성 LLM 설정을 조회합니다."""
+    try:
+        with db_manager._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM get_active_llm_config()")
+            result = cursor.fetchone()
+            
+            if result:
+                return {
+                    'config_id': result[0],
+                    'config_name': result[1],
+                    'system_prompt': result[2],
+                    'model_name': result[3],
+                    'temperature': float(result[4]),
+                    'max_tokens': result[5],
+                    'top_p': float(result[6]),
+                    'frequency_penalty': float(result[7]),
+                    'presence_penalty': float(result[8])
+                }
+            return None
+    except Exception as e:
+        logger.error(f"활성 설정 조회 오류: {e}")
+        return None
+
+
+def _create_default_config(db_manager):
+    """기본 LLM 설정을 생성합니다."""
+    try:
+        with db_manager._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT create_default_llm_config()")
+            config_id = cursor.fetchone()[0]
+            conn.commit()
+            
+            st.success(f"✅ 기본 설정이 생성되었습니다: {config_id}")
+            logger.info(f"기본 LLM 설정 생성: {config_id}")
+            return True
+    except Exception as e:
+        st.error(f"❌ 기본 설정 생성 실패: {e}")
+        logger.error(f"기본 설정 생성 오류: {e}")
+        return False
+
+
+def _render_config_editor(db_manager, active_config):
+    """설정 편집 UI를 렌더링합니다."""
+    st.subheader("현재 활성 설정 편집")
+    
+    with st.form("llm_config_form"):
+        # 설정명 입력
+        st.markdown("#### 설정 기본 정보")
+        config_name = st.text_input(
+            "설정명",
+            value=active_config['config_name'],
+            help="이 LLM 설정의 이름을 입력하세요."
+        )
+        
+        st.markdown("#### 시스템 프롬프트")
+        system_prompt = st.text_area(
+            "시스템 프롬프트",
+            value=active_config['system_prompt'],
+            height=300,
+            help="치료 에이전트의 기본 행동과 응답 방식을 정의하는 프롬프트입니다.",
+            label_visibility="collapsed"
+        )
+        
+        # 모델 설정
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### AI 모델 설정")
+            model_name = st.selectbox(
+                "모델명",
+                options=["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini", "gpt-4.1"],
+                index=["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini", "gpt-4.1"].index(active_config['model_name']) if active_config['model_name'] in ["gpt-4", "gpt-4-turbo", "gpt-3.5-turbo", "gpt-4o", "gpt-4o-mini", "gpt-4.1"] else 5,
+                help="사용할 OpenAI GPT 모델을 선택합니다."
+            )
+            
+            temperature = st.slider(
+                "Temperature",
+                min_value=0.0, max_value=2.0, 
+                value=active_config['temperature'],
+                step=0.1,
+                help="창의성 수준 (0=일관성, 2=창의성)"
+            )
+            
+            max_tokens = st.slider(
+                "Max Tokens",
+                min_value=100, max_value=2000,
+                value=active_config['max_tokens'],
+                step=50,
+                help="응답 최대 길이 (토큰 수)"
+            )
+        
+        with col2:
+            st.markdown("#### 고급 설정")
+            top_p = st.slider(
+                "Top P",
+                min_value=0.0, max_value=1.0,
+                value=active_config['top_p'],
+                step=0.1,
+                help="단어 선택 다양성 제어"
+            )
+            
+            frequency_penalty = st.slider(
+                "Frequency Penalty",
+                min_value=-2.0, max_value=2.0,
+                value=active_config['frequency_penalty'],
+                step=0.1,
+                help="단어 반복 억제 (-2=허용, 2=강력억제)"
+            )
+            
+            presence_penalty = st.slider(
+                "Presence Penalty",
+                min_value=-2.0, max_value=2.0,
+                value=active_config['presence_penalty'],
+                step=0.1,
+                help="새 주제 도입 촉진 (-2=반복, 2=새주제)"
+            )
+        
+        # 저장 버튼
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            save_button = st.form_submit_button("💾 설정 저장", use_container_width=True, type="primary")
+    
+    # 설정 저장 처리
+    if save_button:
+        success = _save_config(
+            db_manager, active_config['config_id'], config_name,
+            system_prompt, model_name, temperature, max_tokens,
+            top_p, frequency_penalty, presence_penalty
+        )
+        
+        if success:
+            st.success("✅ 설정이 성공적으로 저장되었습니다!")
+            st.info("🔄 새 설정은 다음 대화부터 자동으로 적용됩니다.")
+            # 세션 상태의 LLM 설정을 업데이트하여 즉시 반영
+            if hasattr(st.session_state, 'runnable'):
+                st.session_state.runnable = None  # 기존 체인 초기화하여 재생성 유도
+                logger.info("LLM 설정 변경으로 runnable 초기화")
+            st.rerun()
+        else:
+            st.error("❌ 설정 저장에 실패했습니다.")
+
+
+def _save_config(db_manager, config_id, config_name, system_prompt, model_name, temperature, max_tokens, top_p, frequency_penalty, presence_penalty):
+    """LLM 설정을 저장합니다."""
+    try:
+        with db_manager._get_connection() as conn:
+            cursor = conn.cursor()
+            
+            # 설정명도 함께 업데이트
+            cursor.execute("""
+                UPDATE llm_configurations SET
+                    config_name = %s,
+                    system_prompt = %s,
+                    model_name = %s,
+                    temperature = %s,
+                    max_tokens = %s,
+                    top_p = %s,
+                    frequency_penalty = %s,
+                    presence_penalty = %s,
+                    updated_at = NOW()
+                WHERE config_id = %s
+            """, (
+                config_name, system_prompt, model_name, temperature, max_tokens,
+                top_p, frequency_penalty, presence_penalty, config_id
+            ))
+            
+            conn.commit()
+            
+            # UPDATE가 성공했는지 확인
+            if cursor.rowcount > 0:
+                logger.info(f"LLM 설정 업데이트 성공: {config_id}")
+                return True
+            else:
+                logger.warning(f"LLM 설정 업데이트 실패: {config_id}")
+                return False
+                
+    except Exception as e:
+        logger.error(f"LLM 설정 저장 오류: {e}")
+        return False
+
+
+def _render_config_history(db_manager):
+    """설정 이력을 렌더링합니다."""
+    st.subheader("설정 이력")
+    
+    try:
+        with db_manager._get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM get_all_llm_configs()")
+            configs = cursor.fetchall()
+        
+        if configs:
+            # 설정 목록을 DataFrame으로 변환
+            import pandas as pd
+            
+            df_data = []
+            for config in configs:
+                # 시스템 프롬프트 미리보기 (처음 50자 + ...)
+                prompt_preview = config[2][:50] + "..." if len(config[2]) > 50 else config[2]
+                
+                df_data.append({
+                    "설정명": config[1],
+                    "프롬프트": prompt_preview,
+                    "모델": config[3],
+                    "Temp": float(config[4]),
+                    "Max Tokens": config[5],
+                    "Top P": float(config[6]),
+                    "Freq Penalty": float(config[7]),
+                    "Pres Penalty": float(config[8]),
+                    "활성": "✅" if config[9] else "❌",
+                    "생성일시": config[11].strftime("%m-%d %H:%M")
+                })
+            
+            df = pd.DataFrame(df_data)
+            
+            st.dataframe(
+                df,
+                use_container_width=True,
+                height=400,
+                column_config={
+                    "설정명": st.column_config.TextColumn("설정명", width="medium"),
+                    "프롬프트": st.column_config.TextColumn("프롬프트", width="large"),
+                    "모델": st.column_config.TextColumn("모델", width="small"),
+                    "Temp": st.column_config.NumberColumn("Temp", format="%.1f", width="small"),
+                    "Max Tokens": st.column_config.NumberColumn("Max Tokens", width="small"),
+                    "Top P": st.column_config.NumberColumn("Top P", format="%.1f", width="small"),
+                    "Freq Penalty": st.column_config.NumberColumn("Freq Penalty", format="%.1f", width="small"),
+                    "Pres Penalty": st.column_config.NumberColumn("Pres Penalty", format="%.1f", width="small"),
+                    "활성": st.column_config.TextColumn("활성", width="small"),
+                    "생성일시": st.column_config.TextColumn("생성일시", width="medium")
+                }
+            )
+            
+            st.info(f"총 {len(configs)}개의 설정이 있습니다.")
+        else:
+            st.info("저장된 설정이 없습니다.")
+            
+    except Exception as e:
+        st.error(f"❌ 설정 이력 조회 오류: {e}")
+        logger.error(f"설정 이력 조회 오류: {e}")
 
 
